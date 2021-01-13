@@ -219,12 +219,24 @@ namespace Reaction
                 Collection._handlers.AsOwner.Invoke(item);
                 Collection._addHandlers.AsOwner.Invoke(item);
             }
+            
+            public void AddRange(IEnumerable<TItem> items)
+            {
+                foreach (var item in items)
+                    Add(item);
+            }
 
             public void Remove(TItem item)
             {
                 Collection.Items.Remove(item);
                 Collection._handlers.AsOwner.Invoke(item);
                 Collection._removeHandlers.AsOwner.Invoke(item);
+            }
+            
+            public void RemoveRange(IEnumerable<TItem> items)
+            {
+                foreach (var item in items)
+                    Remove(item);
             }
 
             public void Clear()
