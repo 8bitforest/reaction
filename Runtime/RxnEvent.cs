@@ -133,6 +133,8 @@ namespace Reaction
                 task.SetResult(args);
             });
 
+            if (timeout == 0)
+                return await task.Task;
             if (await Task.WhenAny(task.Task, Task.Delay((int) (timeout * 1000))) == task.Task)
                 return task.Task.Result;
 
