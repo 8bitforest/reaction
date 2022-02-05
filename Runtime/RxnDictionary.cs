@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 namespace Reaction
@@ -16,8 +17,9 @@ namespace Reaction
         public bool ContainsValue(TValue value) => Items.ContainsValue(new RxnValue<TValue>(value));
         public bool TryGetValue(TKey key, out RxnValue<TValue> value) => Items.TryGetValue(key, out value);
         public RxnValue<TValue> this[TKey key] => Items[key];
-        public ICollection<TKey> Keys => Items.Keys;
-        public ICollection<RxnValue<TValue>> Values => Items.Values;
+        public IEnumerable<TKey> Keys => Items.Keys;
+        public IEnumerable<RxnValue<TValue>> RxnValues => Items.Values;
+        public IEnumerable<TValue> Values => Items.Values.Select(v => v.Value);
 
         public int OnKeyAdded(TKey key, GameObject g, Action a)
             => OnKeyAdded(key, g, _ => a());
@@ -37,6 +39,19 @@ namespace Reaction
                 a(new KeyValuePair<TKey, RxnValue<TValue>>(key, Items[key]));
             return id;
         }
+
+        public int OnAddedKey(GameObject g, Action<TKey> a)
+            => OnAdded(g, kv => a(kv.Key));
+
+        public int RelayAddedKey(GameObject g, Action<TKey> a)
+            => RelayAdded(g, kv => a(kv.Key));
+
+        public int OnAddedValue(GameObject g, Action<TValue> a)
+            => OnAdded(g, kv => a(kv.Value));
+
+        public int RelayAddedValue(GameObject g, Action<TValue> a)
+            => RelayAdded(g, kv => a(kv.Value));
+
 
         public class RxnDictionaryOwner : RxnCollectionOwner<RxnDictionary<TKey, TValue>>
         {

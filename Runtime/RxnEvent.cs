@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Reaction.Exceptions;
 using UnityEngine;
 
 namespace Reaction
@@ -11,7 +12,7 @@ namespace Reaction
         protected override RxnEventBaseOwner Owner => new RxnEventOwner(this);
         public int OnInvoked(GameObject g, Action a) => OnInvokedBase(g, a);
 
-        public async Task Wait(float timeout = 0)
+        public async Task Wait(float timeout = Rxn.Timeout)
             => await WaitBase(timeout);
 
         public class RxnEventOwner : RxnEventBaseOwner
@@ -27,7 +28,7 @@ namespace Reaction
         protected override RxnEventBaseOwner Owner => new RxnEventOwner(this);
         public int OnInvoked(GameObject g, Action<T> a) => OnInvokedBase(g, a);
 
-        public async Task<T> Wait(float timeout = 0)
+        public async Task<T> Wait(float timeout = Rxn.Timeout)
             => (T) (await WaitBase(timeout))[0];
 
         public class RxnEventOwner : RxnEventBaseOwner
@@ -43,7 +44,7 @@ namespace Reaction
         protected override RxnEventBaseOwner Owner => new RxnEventOwner(this);
         public int OnInvoked(GameObject g, Action<T, T2> a) => OnInvokedBase(g, a);
 
-        public async Task<(T, T2)> Wait(float timeout = 0)
+        public async Task<(T, T2)> Wait(float timeout = Rxn.Timeout)
             => TupleExtensions.FromArray<T, T2>(await WaitBase(timeout));
 
         public class RxnEventOwner : RxnEventBaseOwner
@@ -59,7 +60,7 @@ namespace Reaction
         protected override RxnEventBaseOwner Owner => new RxnEventOwner(this);
         public int OnInvoked(GameObject g, Action<T, T2, T3> a) => OnInvokedBase(g, a);
 
-        public async Task<(T, T2, T3)> Wait(float timeout = 0)
+        public async Task<(T, T2, T3)> Wait(float timeout = Rxn.Timeout)
             => TupleExtensions.FromArray<T, T2, T3>(await WaitBase(timeout));
 
         public class RxnEventOwner : RxnEventBaseOwner
@@ -75,7 +76,7 @@ namespace Reaction
         protected override RxnEventBaseOwner Owner => new RxnEventOwner(this);
         public int OnInvoked(GameObject g, Action<T, T2, T3, T4> a) => OnInvokedBase(g, a);
 
-        public async Task<(T, T2, T3, T4)> Wait(float timeout = 0)
+        public async Task<(T, T2, T3, T4)> Wait(float timeout = Rxn.Timeout)
             => TupleExtensions.FromArray<T, T2, T3, T4>(await WaitBase(timeout));
 
         public class RxnEventOwner : RxnEventBaseOwner
@@ -98,16 +99,10 @@ namespace Reaction
         }
 
         protected abstract RxnEventBaseOwner Owner { get; }
+        
         private readonly RxnOwnerValidator _ownerValidator = new RxnOwnerValidator(3);
         private readonly Dictionary<int, Handler> _handlers = new Dictionary<int, Handler>();
-
-        private bool _invoking;
-        private readonly HashSet<int> _handlersToRemove;
-
-        protected RxnEventBase()
-        {
-            _handlersToRemove = new HashSet<int>();
-        }
+        private readonly List<TaskCompletionSource<object[]>> _waitTasks = new List<TaskCompletionSource<object[]>>();
 
         protected int OnInvokedBase(GameObject g, Delegate a)
         {
@@ -125,20 +120,19 @@ namespace Reaction
 
         protected async Task<object[]> WaitBase(float timeout)
         {
+            // This does not re-use OnInvoked so that when we return, we return in a context where it is valid to call
+            // Invoke.
+            
             var task = new TaskCompletionSource<object[]>();
-            var waitHandler = 0;
-            waitHandler = OnInvokedBase(null, args =>
-            {
-                RemoveHandler(waitHandler);
-                task.SetResult(args);
-            });
+            _waitTasks.Add(task);
 
             if (timeout == 0)
                 return await task.Task;
+            
             if (await Task.WhenAny(task.Task, Task.Delay((int) (timeout * 1000))) == task.Task)
                 return task.Task.Result;
 
-            throw new Exception("RxnEvent.Wait timed out");
+            throw new RxnTimeoutException(timeout);
         }
 
         public void RemoveHandler(int id)
@@ -146,10 +140,7 @@ namespace Reaction
             if (!_handlers.ContainsKey(id))
                 return;
 
-            if (_invoking)
-                _handlersToRemove.Add(id);
-            else
-                _handlers.Remove(id);
+            _handlers.Remove(id);
         }
 
         public void RemoveHandlers(GameObject gameObject)
@@ -171,24 +162,23 @@ namespace Reaction
 
             protected void InvokeBase(params object[] args)
             {
-                _base._invoking = true;
-                foreach (var kv in _base._handlers)
+                // Make sure to call .ToList() to create a copy so that _handlers can be modified while invoking
+                foreach (var handler in _base._handlers.Values.ToList())
                 {
-                    if ((object) kv.Value.GameObject != null && kv.Value.GameObject == null)
-                    {
-                        Debug.Log("Event found a destroyed GameObject! Removing...");
-                        _base._handlersToRemove.Add(kv.Key);
-                    }
+                    if ((object) handler.GameObject != null && handler.GameObject == null)
+                        Debug.Log("RxnEvent found a destroyed GameObject! Removing...");
                     else
-                    {
-                        kv.Value.Invoke(args);
-                    }
+                        handler.Invoke(args);
                 }
 
-                foreach (var id in _base._handlersToRemove)
-                    _base._handlers.Remove(id);
-                _base._handlersToRemove.Clear();
-                _base._invoking = false;
+                // Very important to complete these AFTER running all the handlers. This ensures that any calls to Wait
+                // will return outside of a handler context. This allows Invoke to be called right after Wait. We also
+                // need to make sure to create a copy of the current wait tasks, so that Wait can be called after
+                // another Wait returns
+                var tasks = _base._waitTasks.ToList();
+                _base._waitTasks.Clear();
+                foreach (var task in tasks)
+                    task.SetResult(args);
             }
         }
     }

@@ -1,5 +1,5 @@
 {
-    "name": "8BitForest.Reaction.Runtime",
+    "name": "8BitForest.Reaction",
     "rootNamespace": "Reaction",
     "references": [],
     "includePlatforms": [],
