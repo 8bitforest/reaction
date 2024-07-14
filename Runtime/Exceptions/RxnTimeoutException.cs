@@ -1,6 +1,6 @@
 using System;
 
-namespace Reaction.Exceptions
+namespace Reaction
 {
     public class RxnTimeoutException : Exception
     {

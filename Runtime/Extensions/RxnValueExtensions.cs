@@ -5,20 +5,16 @@ namespace Reaction
 {
     public static class RxnValueExtensions
     {
-        public static void OnDecreased<T>(this RxnValue<T> value, GameObject g, Action a) where T : IComparable
-            => OnDecreased(value, g, _ => a());
-
-        public static void OnDecreased<T>(this RxnValue<T> value, GameObject g, Action<T> a) where T : IComparable
+        public static void OnDecreased<T>(this IRxnReadOnlyValue<T> value, GameObject g, Action<ValueChange<T>> a)
+            where T : IComparable
         {
-            value.OnChangedWhen(g, (newValue, oldValue) => newValue.CompareTo(oldValue) < 0, a);
+            value.OnChangedWhen(g, c => c.New.CompareTo(c.Old) < 0, a);
         }
 
-        public static void OnIncreased<T>(this RxnValue<T> value, GameObject g, Action a) where T : IComparable
-            => OnIncreased(value, g, _ => a());
-
-        public static void OnIncreased<T>(this RxnValue<T> value, GameObject g, Action<T> a) where T : IComparable
+        public static void OnIncreased<T>(this IRxnReadOnlyValue<T> value, GameObject g, Action<ValueChange<T>> a)
+            where T : IComparable
         {
-            value.OnChangedWhen(g, (newValue, oldValue) => newValue.CompareTo(oldValue) > 0, a);
+            value.OnChangedWhen(g, c => c.New.CompareTo(c.Old) > 0, a);
         }
     }
 }

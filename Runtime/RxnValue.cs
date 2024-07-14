@@ -1,102 +1,94 @@
 using System;
 using System.Diagnostics;
 using System.Threading.Tasks;
-using System.Timers;
-using Reaction.Exceptions;
 using UnityEngine;
 
 namespace Reaction
 {
-    public class RxnValue<T>
+    public struct ValueChange<T>
     {
-        public RxnValueOwner AsOwner
-        {
-            get
-            {
-                _ownerValidator.Validate();
-                return _owner;
-            }
-        }
+        public T New { get; }
+        public T Old { get; }
 
+        public ValueChange(T old, T @new)
+        {
+            Old = old;
+            New = @new;
+        }
+    }
+
+    public interface IRxnReadOnlyValue<T>
+    {
+        T Value { get; }
+        int OnChanged(GameObject g, Action<ValueChange<T>> a);
+        int OnChangedInit(GameObject g, Action<ValueChange<T>> a);
+        int OnChangedWhen(GameObject g, Func<ValueChange<T>, bool> p, Action<ValueChange<T>> a);
+        int OnChangedWhenInit(GameObject g, Func<ValueChange<T>, bool> p, Action<ValueChange<T>> a);
+        int OnChangedTo(T v, GameObject g, Action<ValueChange<T>> a);
+        int OnChangedToInit(T v, GameObject g, Action<ValueChange<T>> a);
+        Task WaitUntil(T v, float timeout = Rxn.Timeout);
+        void RemoveHandler(int id);
+    }
+
+    public class RxnValue<T> : IRxnReadOnlyValue<T>
+    {
         public T Value { get; private set; }
+        private readonly RxnEvent<ValueChange<T>> _handlers;
 
-        private readonly RxnValueOwner _owner;
-        private readonly RxnOwnerValidator _ownerValidator = new RxnOwnerValidator();
-        private readonly RxnEvent<T> _handlers = new RxnEvent<T>();
-
-        public RxnValue()
-        {
-            _owner = new RxnValueOwner(this);
-            Value = default;
-        }
+        public RxnValue() : this(default) { }
 
         public RxnValue(T value)
         {
-            _owner = new RxnValueOwner(this);
             Value = value;
+            _handlers = new RxnEvent<ValueChange<T>>();
         }
 
-        public int OnChanged(GameObject g, Action a)
-            => OnChanged(g, _ => a());
-
-        public int OnChanged(GameObject g, Action<T> a)
-            => _handlers.OnInvoked(g, a);
-
-        public int RelayChanged(GameObject g, Action a)
-            => RelayChanged(g, _ => a());
-
-        public int RelayChanged(GameObject g, Action<T> a)
+        public void Set(T newValue, bool forceUpdate = false, bool ignoreUpdate = false)
         {
-            var id = OnChanged(g, a);
-            a(Value);
+            var changed = !Value?.Equals(newValue) ?? newValue != null;
+            var oldValue = Value;
+            Value = newValue;
+
+            if (!ignoreUpdate && (forceUpdate || changed))
+                _handlers.Invoke(new ValueChange<T>(oldValue, newValue));
+        }
+
+        // Implementing IRxnValue<T> methods
+        public int OnChanged(GameObject g, Action<ValueChange<T>> a) => OnChanged(g, a, false);
+        public int OnChangedInit(GameObject g, Action<ValueChange<T>> a) => OnChanged(g, a, true);
+
+        private int OnChanged(GameObject g, Action<ValueChange<T>> a, bool init)
+        {
+            var id = _handlers.OnInvoked(g, a);
+            if (init)
+                a(new ValueChange<T>(Value, Value));
             return id;
         }
 
-        public int OnChangedWhen(GameObject g, Func<T, T, bool> predicate, Action a)
-            => OnChangedWhen(g, predicate, _ => a());
+        // @formatter:off
+        public int OnChangedWhen(GameObject g, Func<ValueChange<T>, bool> p, Action<ValueChange<T>> a) => OnChangedWhen(g, p, a, false);
+        public int OnChangedWhenInit(GameObject g, Func<ValueChange<T>, bool> p, Action<ValueChange<T>> a) => OnChangedWhen(g, p, a, true);
+        // @formatter:on
 
-        public int OnChangedWhen(GameObject g, Func<T, T, bool> predicate, Action<T> a)
+        private int OnChangedWhen(GameObject g, Func<ValueChange<T>, bool> p, Action<ValueChange<T>> a, bool init)
         {
-            var prevValue = Value;
-            return OnChanged(g, newValue =>
+            return OnChanged(g, (change) =>
             {
-                if (predicate(newValue, prevValue))
-                    a(newValue);
-                prevValue = Value;
-            });
+                if (p(change))
+                    a(change);
+            }, init);
         }
 
-        public int RelayChangedWhen(GameObject g, Func<T, T, bool> predicate, Action a)
-            => RelayChangedWhen(g, predicate, _ => a());
+        public int OnChangedTo(T v, GameObject g, Action<ValueChange<T>> a) => OnChangedTo(v, g, a, false);
+        public int OnChangedToInit(T v, GameObject g, Action<ValueChange<T>> a) => OnChangedTo(v, g, a, true);
 
-        public int RelayChangedWhen(GameObject g, Func<T, T, bool> predicate, Action<T> a)
+        private int OnChangedTo(T v, GameObject g, Action<ValueChange<T>> a, bool init)
         {
-            var prevValue = Value;
-            return RelayChanged(g, newValue =>
+            return OnChanged(g, (change) =>
             {
-                if (predicate(newValue, prevValue))
-                    a(newValue);
-                prevValue = Value;
-            });
-        }
-
-        public int OnChangedTo(T v, GameObject g, Action a)
-            => OnChangedTo(v, g, _ => a());
-
-        public int OnChangedTo(T v, GameObject g, Action<T> a)
-        {
-            return OnChangedWhen(g, (newValue, _) => newValue.Equals(v), a);
-        }
-
-        public int RelayChangedTo(T v, GameObject g, Action a)
-            => RelayChangedTo(v, g, _ => a());
-
-        public int RelayChangedTo(T v, GameObject g, Action<T> a)
-        {
-            var id = OnChangedTo(v, g, a);
-            if (Value.Equals(v))
-                a(Value);
-            return id;
+                if (change.New.Equals(v))
+                    a(change);
+            }, init);
         }
 
         public async Task WaitUntil(T v, float timeout = Rxn.Timeout)
@@ -109,7 +101,7 @@ namespace Reaction
                 var msLeft = (long)(timeout * 1000) - timeoutWatch.ElapsedMilliseconds;
                 if (hasTimeout && msLeft <= 0)
                     throw new RxnTimeoutException(timeout);
-                
+
                 try
                 {
                     await _handlers.Wait(hasTimeout ? msLeft / 1000f : 0);
@@ -126,11 +118,6 @@ namespace Reaction
             _handlers.RemoveHandler(id);
         }
 
-        protected bool Equals(RxnValue<T> other)
-        {
-            return Value.Equals(other.Value);
-        }
-
         public override bool Equals(object obj)
         {
             if (ReferenceEquals(null, obj))
@@ -139,46 +126,18 @@ namespace Reaction
                 return true;
             if (obj.GetType() != GetType())
                 return false;
-            return Equals((RxnValue<T>) obj);
+            return Value.Equals(((RxnValue<T>)obj).Value);
         }
 
         public override int GetHashCode()
         {
+            // ReSharper disable once NonReadonlyMemberInGetHashCode
             return Value.GetHashCode();
         }
 
         public static implicit operator T(RxnValue<T> value)
         {
             return value.Value;
-        }
-
-        public class RxnValueOwner
-        {
-            private readonly RxnValue<T> _value;
-
-            public RxnValueOwner(RxnValue<T> value)
-            {
-                _value = value;
-            }
-
-            public void Set(T newValue, bool forceUpdate = false, bool ignoreUpdate = false)
-            {
-                var changed = !_value.Value?.Equals(newValue) ?? newValue != null;
-                _value.Value = newValue;
-
-                if (!ignoreUpdate && (forceUpdate || changed))
-                    _value._handlers.AsOwner.Invoke(_value.Value);
-            }
-
-            public int BindTo(GameObject g, RxnValue<T> otherValue)
-            {
-                return otherValue.RelayChanged(g, v => Set(v));
-            }
-
-            public int BindToWhen(GameObject g, RxnValue<T> otherValue, Func<T, T, bool> predicate)
-            {
-                return otherValue.RelayChangedWhen(g, predicate, v => Set(v));
-            }
         }
     }
 }

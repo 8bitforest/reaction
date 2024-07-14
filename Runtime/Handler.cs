@@ -43,7 +43,7 @@ namespace Reaction
             if (ReferenceEquals(null, obj)) return false;
             if (ReferenceEquals(this, obj)) return true;
             if (obj.GetType() != this.GetType()) return false;
-            return Equals((Handler) obj);
+            return Equals((Handler)obj);
         }
 
         public override int GetHashCode()
